@@ -13,12 +13,12 @@ import static security.AES_GCM.*;
 
 public class MasterKeyManager {
     // שם הקובץ שבו נשמר ה-master key המוצפן
-    private static final Path MASTER_KEY_FILE = Paths.get("src/resources/master_key.enc");
+    private static final Path MASTER_KEY_FILE = Paths.get("master_key.enc");
 
     // פרמטרים ל-AES-GCM
     private static final int AES_KEY_SIZE = 16;       // 16 bytes = 128 bits
     private static final int IV_LENGTH = 12;      // 12 bytes = 96 bits
-    private static final byte[] AAD = "MyGlobalAAD".getBytes(StandardCharsets.UTF_8);
+    byte[] exampleAAD = "GlobalAAD".getBytes(StandardCharsets.UTF_8);
 
     private final byte[] rawMasterKey; // יאוחסן בזיכרון אחרי טעינה/יצירה
 
@@ -59,23 +59,14 @@ public class MasterKeyManager {
      * @throws Exception בטעויות IO או פענוח
      */
     private byte[] loadMasterKey(byte[] aesKey) throws Exception {
-        // 1. קרא את הקובץ המלא
         byte[] fileData = Files.readAllBytes(MASTER_KEY_FILE);
-
-        if (fileData == null || fileData.length == 0) {
-            throw new IllegalStateException("אין נתונים להצפנה/פענוח: הקובץ ריק או לא נמצא");
-        }
-        // 2. נבנה roundKeys מתוך aesKey
         byte[][] roundKeys = new byte[11][AES_KEY_SIZE];
         System.arraycopy(aesKey, 0, roundKeys[0], 0, AES_KEY_SIZE);
         keySchedule(roundKeys);
 
-        // 3. מפעילים AES-GCM.decrypt:
-        //    מימוש AES_GCM שלנו מצפה לקבל מערך שבו ההתחלה היא IV (12 בתים)
-        //    והחלק שנותר הוא ciphertext||tag
-        byte[] rawMaster = decrypt(fileData, AAD, roundKeys);
+        //  decrypt מצפה בדיוק ל־[IV(12) || ciphertext || tag(16)]
+        byte[] rawMaster = decrypt(fileData, exampleAAD, roundKeys);
 
-        // 4. מנקים את fileData מהזיכרון (מטח כדי שלא ישאר ישן)
         Arrays.fill(fileData, (byte) 0);
 
         return rawMaster;
@@ -106,35 +97,23 @@ public class MasterKeyManager {
      */
     private byte[] generateAndStoreMasterKey(byte[] aesKey) throws Exception {
         SecureRandom random = SecureRandom.getInstanceStrong();
-
-        // א) נייצר rawRandomMaster (16 בתים)
         byte[] rawMaster = new byte[AES_KEY_SIZE];
         random.nextBytes(rawMaster);
 
-        // ב) נבנה roundKeys להפעלת AES-GCM
         byte[][] roundKeys = new byte[11][AES_KEY_SIZE];
         System.arraycopy(aesKey, 0, roundKeys[0], 0, AES_KEY_SIZE);
         keySchedule(roundKeys);
 
-        // ג) ניצור IV אקראי (12 בתים)
-        byte[] iv = ivGenerator();
+        byte[] cipherPlusIVandTag = encrypt(rawMaster, exampleAAD, roundKeys);
 
-        // ד) נפעיל את AES_GCM.encrypt(plaintext=rawMaster, AAD=null, roundKeys)
-        byte[] cipherPlusTag = encrypt(rawMaster, AAD, roundKeys);
+        Path parent = MASTER_KEY_FILE.getParent();
+        if (parent != null && Files.notExists(MASTER_KEY_FILE.getParent())) {
+            Files.createDirectories(MASTER_KEY_FILE.getParent());
+        }
 
-        // ה) נחבר iv || cipherPlusTag
-        byte[] fileData = new byte[IV_LENGTH + cipherPlusTag.length];
-        System.arraycopy(iv, 0, fileData, 0, IV_LENGTH);
-        System.arraycopy(cipherPlusTag, 0, fileData, IV_LENGTH, cipherPlusTag.length);
+        Files.write(MASTER_KEY_FILE, cipherPlusIVandTag);
+        Arrays.fill(cipherPlusIVandTag, (byte) 0);
 
-        // ו) נשמור ל־disk כ master_key.enc
-        Files.createDirectories(MASTER_KEY_FILE.getParent());
-        Files.write(MASTER_KEY_FILE, fileData);
-
-        // ז) מאפסים את cipherPlusTag (כבר נשמר בדיסק)
-        Arrays.fill(cipherPlusTag, (byte) 0);
-
-        // ח) מחזירים עותק של rawMaster כדי לשמור בזיכרון
         return rawMaster.clone();
     }
 

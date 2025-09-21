@@ -1,6 +1,5 @@
 package security;
 
-import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.util.Arrays;
 import static security.AES_CTR.*;
